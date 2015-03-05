@@ -10,8 +10,6 @@
 # Example usage:
 #     $ run-command-on-git-revisions origin/master master 'python runtests.py'
 
-set -e
-
 if [[ $1 == -v ]]; then
     verbose=1
     shift
@@ -44,7 +42,6 @@ abort_if_dirty_repo() {
         echo "You have untracked files that could be overwritten! Aborting."
         exit 1
     fi
-    set -e
 }
 
 enforce_usage() {
