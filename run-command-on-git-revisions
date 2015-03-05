@@ -1,14 +1,18 @@
 #!/bin/bash
 #
-# This script runs a given command over a range of Git revisions. Note that it
-# will check past revisions out! Exercise caution if there are important
-# untracked files in your working tree.
+# This script runs a given command over a range of Git revisions.
 #
-# This came from Gary Bernhardt's dotfiles:
-#     https://github.com/garybernhardt/dotfiles
+# The script will bail out if there are uncommitted changes in the current
+# directory.
 #
-# Example usage:
-#     $ run-command-on-git-revisions origin/master master 'python runtests.py'
+# Previous versions of this script would stop when the command being executed
+# didn't return 0 or true. 
+# The default behaviour for this version is to run the command on all
+# revisions unless the user provide a command line option to stop when the
+# script returns true or returns false.
+#
+# The quoting of the revisions has been improved to properly deal with 
+# options like; HEAD@{1 month ago}, for the git-rev command.
 
 if [[ $1 == -v ]]; then
     verbose=1
@@ -19,14 +23,19 @@ start_ref=$1
 end_ref=$2
 test_command=$3
 
-main() {
+main()
+{
     abort_if_dirty_repo
     enforce_usage
     run_tests
 }
 
-abort_if_dirty_repo() {
-    set +e
+usage()
+{
+}
+
+abort_if_dirty_repo()
+{
     git diff-index --quiet --cached HEAD
     if [[ $? -ne 0 ]]; then
         echo "You have staged but not committed changes that would be lost! Aborting."
@@ -44,20 +53,21 @@ abort_if_dirty_repo() {
     fi
 }
 
-enforce_usage() {
+enforce_usage()
+{
     if [ -z "$test_command" ]; then
         usage
         exit 1
     fi
 }
 
-usage() {
+usage()
+{
     echo "usage: `basename $0` start_ref end_ref test_command"
 }
 
-run_tests() {
-  set +e
-
+run_tests()
+{
     revs=`log_command git rev-list --reverse "'${start_ref}'".."'${end_ref}'"`
 
     for rev in $revs; do
@@ -70,12 +80,14 @@ run_tests() {
     debug "OK for all revisions!"
 }
 
-log_command() {
+log_command()
+{
     debug "=> $*"
     eval "$@"
 }
 
-debug() {
+debug()
+{
     if [ $verbose ]; then
         echo $* >&2
     fi
