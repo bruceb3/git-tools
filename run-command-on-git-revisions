@@ -1,132 +1,113 @@
-#!/bin/bash
-#
-# This script runs a given command over a range of Git revisions.
-#
-# The script will bail out if there are uncommitted changes in the current
-# directory.
-#
-# Previous versions of this script would stop when the command being executed
-# didn't return 0 or true. 
-# The default behaviour for this version is to run the command on all
-# revisions unless the user provide a command line option to stop when the
-# script returns true or returns false.
-#
-# The quoting of the revisions has been improved to properly deal with 
-# options like; HEAD@{1 month ago}, for the git-rev command.
+#!/usr/bin/env ruby
+# vim: ft=ruby
 
-PROGNAME=${0##*/}
+require 'getoptlong'
 
-stop_on_true=0 stop_on_false=0
-verbose=0
-start_ref= end_ref=
-test_command=
+module GitCommand
 
-main()
-{
-    run_command_line_options $@
-    abort_if_dirty_repo
-    run_tests
-}
+  def self.init
+    $verbose = false
+    $stop_on_true, $stop_on_false = false, false
+    $start_ref, $end_ref = '', ''
+    $test_command = ''
+  end
 
-usage()
-{
-cat <<FFF 1>&2
-usage: $PROGNAME [-v] [-t|-f] start_rev end_rev command
+  def self.abort_if_dirty_repo
+    if !system('git diff-index --quiet --cached HEAD')
+      warn "You have staged but not committed changes that would be lost! Aborting."
+      exit 1
+    end
+    if !system('git diff-files --quiet')
+      warn "You have unstaged changes that would be lost! Aborting."
+      exit 1
+    end
+    untracked=%x(git ls-files --exclude-standard --others)
+    if untracked.length > 0
+      warn "You have untracked files that could be overwritten! Aborting."
+      exit 1
+    end
+  end
+
+  def self.usage
+    warn \
+      "usage: #{File.basename($0)} [-v] [-t|-f] start_rev end_rev command
 
  -v verbose output
  -t stop when the command returns true
  -f stop when the command returns false
 
 Default action is to run the command on revisions, ignoring the return
-value of the command.
-FFF
-}
+value of the command."
+  end
 
-run_command_line_options()
-{
-    while getopts 'ftv' args $@
-    do
-        case $args in
-            f) stop_on_false=1 ;;
-            t) stop_on_true=1 ;;
-            v) verbose=1 ;;
-            *) break
-        esac
-    done
-    if [[ $stop_on_false = 1 ]] && [[ $stop_on_true = 1 ]]
-    then
-        echo "Either -f or -t, not both" 1>&2
-        usage; exit 1
-    fi
+  def self.process_command_line_args
+    opts = GetoptLong.new(
+      [ '--verbose', '-v', GetoptLong::NO_ARGUMENT ],
+      [ '--true',    '-t', GetoptLong::NO_ARGUMENT ],
+      [ '--false',   '-f', GetoptLong::NO_ARGUMENT ],
+    )
+    opts.each do |opt, arg|
+      case opt
+      when '--verbose'
+        $verbose = true
+      when '--true'
+        $stop_on_true = true
+      when '--false'
+        $stop_on_false = true
+      end
+    end
+    $start_ref, $end_ref = ARGV.shift, ARGV.shift
+    $test_command = ARGV.shift
+    if $start_ref == nil
+      warn "Missing start reference"
+      usage; exit(1)
+    end
+    if $end_ref == nil
+      warn "Missing end reference"
+      usage; exit(1)
+    end
+    if $test_command == nil
+      warn "Missing command"
+      usage; exit(1)
+    end
+  end
 
-    if (( $# < 3 ))
-    then
-        echo "missing args"
-        usage; exit 1
-    fi
-    # Get rid of any options from the command line.
-    while (( $# != 3 ))
-    do
-        shift
-    done
-    start_ref=$1
-    end_ref=$2
-    test_command=$3
-}
+  def self.run_command *args
+    cmd = args.length > 1 ? args[1] : args[0]
+    debug "---> #{cmd}"
+    if args.length > 1 && args[0] == :d
+      system(cmd)
+    else
+      output=`#{cmd}`
+      output.split(/\n/)
+    end
+  end
 
+  def self.debug output
+    warn output
+  end
 
-abort_if_dirty_repo()
-{
-    git diff-index --quiet --cached HEAD
-    if [[ $? -ne 0 ]]; then
-        echo "You have staged but not committed changes that would be lost! Aborting."
+  def self.run_tests
+    run_command("git rev-list --reverse '#{$start_ref}'..'#{$end_ref}'").each do |rev|
+      debug "Checking out: #{`git log --oneline -1 #{rev}`}"
+      run_command :d, "git checkout --quiet #{rev}"
+      puts "(command)> #{$test_command}"
+      result = system($test_command)
+      if result == true and $stop_on_true == true
         exit 1
-    fi
-    git diff-files --quiet
-    if [[ $? -ne 0 ]]; then
-        echo "You have unstaged changes that would be lost! Aborting."
+      elsif result == false and $stop_on_false == true
         exit 1
-    fi
-    untracked=$(git ls-files --exclude-standard --others)
-    if [ -n "$untracked" ]; then
-        echo "You have untracked files that could be overwritten! Aborting."
-        exit 1
-    fi
-}
+      end
+      run_command :d, "git reset --hard --quiet"
+    end
+    run_command :d, "git checkout --quiet #{$end_ref}"
+  end
 
-run_tests()
-{
-    revs=`log_command git rev-list --reverse "'${start_ref}'".."'${end_ref}'"`
+  def self.run
+    process_command_line_args
+    abort_if_dirty_repo
+    run_tests
+  end
+end
 
-    for rev in $revs; do
-        debug "Checking out: $(git log --oneline -1 $rev)"
-        log_command git checkout --quiet $rev
-        log_command $test_command
-        log_command git reset --hard --quiet
-    done
-    log_command git checkout --quiet $end_ref
-    debug "OK for all revisions!"
-}
-
-log_command()
-{
-    debug "=> $*"
-    eval "$@"
-    if [[ $stop_on_false = 1 ]] && [[ $? -ne 0 ]]
-    then
-        exit 0
-    fi
-    if [[ $stop_on_true = 1 ]] && [[ $? -eq 0 ]]
-    then
-        exit 0
-    fi
-}
-
-debug()
-{
-    if [ $verbose ]; then
-        echo $* >&2
-    fi
-}
-
-main $@
+GitCommand.run
