@@ -14,25 +14,66 @@
 # The quoting of the revisions has been improved to properly deal with 
 # options like; HEAD@{1 month ago}, for the git-rev command.
 
-if [[ $1 == -v ]]; then
-    verbose=1
-    shift
-fi
+PROGNAME=${0##*/}
 
-start_ref=$1
-end_ref=$2
-test_command=$3
+stop_on_true=0 stop_on_false=0
+verbose=0
+start_ref= end_ref=
+test_command=
 
 main()
 {
+    run_command_line_options $@
     abort_if_dirty_repo
-    enforce_usage
     run_tests
 }
 
 usage()
 {
+cat <<FFF 1>&2
+usage: $PROGNAME [-v] [-t|-f] start_rev end_rev command
+
+ -v verbose output
+ -t stop when the command returns true
+ -f stop when the command returns false
+
+Default action is to run the command on revisions, ignoring the return
+value of the command.
+FFF
 }
+
+run_command_line_options()
+{
+    while getopts 'ftv' args $@
+    do
+        case $args in
+            f) stop_on_false=1 ;;
+            t) stop_on_true=1 ;;
+            v) verbose=1 ;;
+            *) break
+        esac
+    done
+    if [[ $stop_on_false = 1 ]] && [[ $stop_on_true = 1 ]]
+    then
+        echo "Either -f or -t, not both" 1>&2
+        usage; exit 1
+    fi
+
+    if (( $# < 3 ))
+    then
+        echo "missing args"
+        usage; exit 1
+    fi
+    # Get rid of any options from the command line.
+    while (( $# != 3 ))
+    do
+        shift
+    done
+    start_ref=$1
+    end_ref=$2
+    test_command=$3
+}
+
 
 abort_if_dirty_repo()
 {
@@ -53,19 +94,6 @@ abort_if_dirty_repo()
     fi
 }
 
-enforce_usage()
-{
-    if [ -z "$test_command" ]; then
-        usage
-        exit 1
-    fi
-}
-
-usage()
-{
-    echo "usage: `basename $0` start_ref end_ref test_command"
-}
-
 run_tests()
 {
     revs=`log_command git rev-list --reverse "'${start_ref}'".."'${end_ref}'"`
@@ -84,6 +112,14 @@ log_command()
 {
     debug "=> $*"
     eval "$@"
+    if [[ $stop_on_false = 1 ]] && [[ $? -ne 0 ]]
+    then
+        exit 0
+    fi
+    if [[ $stop_on_true = 1 ]] && [[ $? -eq 0 ]]
+    then
+        exit 0
+    fi
 }
 
 debug()
@@ -93,4 +129,4 @@ debug()
     fi
 }
 
-main
+main $@
